@@ -1,0 +1,27 @@
+{
+  "name": "@studiomopoke/agentic-bootstrap",
+  "version": "1.0.0",
+  "description": "Bootstrap an agentic development workflow for Claude Code",
+  "bin": {
+    "agentic-bootstrap": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "bootstrap.md",
+    "README.md"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "ai",
+    "agentic",
+    "workflow",
+    "developer-tools"
+  ],
+  "author": "StudioMopoke",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/StudioMopoke/agentic-bootstrap"
+  }
+}
