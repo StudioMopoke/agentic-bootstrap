@@ -1,6 +1,6 @@
 # Bootstrap Agentic Workflow
 
-Set up an AI-assisted development workflow for this project. Generates `/start`, `/resume`, `/review`, and `/discuss` slash commands tailored to this codebase, plus a workflow configuration section for CLAUDE.md.
+Set up an AI-assisted development workflow for this project. Generates `/start`, `/resume`, `/review`, `/discuss`, and `/feature` slash commands tailored to this codebase, plus a workflow configuration section for CLAUDE.md.
 
 ## Instructions
 
@@ -90,7 +90,7 @@ Explore the codebase to understand its structure. Run these in parallel:
    - External domains agents should be aware of when investigating issues (e.g., "auth is handled by our identity service in repo X", "we consume events from the payments service")
    - Any documentation URLs, API specs (OpenAPI/Swagger), or reference repos that would help agents understand integrations
 5. **Check for existing CLAUDE.md:** Read it if present — we'll append to it rather than overwrite
-6. **Check for existing .claude/commands/:** Warn if start.md, resume.md, review.md, or discuss.md already exist
+6. **Check for existing .claude/commands/:** Warn if start.md, resume.md, review.md, discuss.md, or feature.md already exist
 
 Present findings to the user:
 - "I found a [Go/Node/Python/etc.] project with these key directories: ..."
@@ -287,7 +287,239 @@ Write to `.claude/commands/review.md`. The generated command should handle:
 
 Include a note: `/review` is for pre-PR self-review. It's not a replacement for team code review, but helps catch issues before involving reviewers.
 
-#### 6e. Update CLAUDE.md
+#### 6e. Generate `feature.md`
+
+Write to `.claude/commands/feature.md`. The generated command should handle two modes: **specification mode** (default) and **review mode**.
+
+##### Specification mode (default)
+
+Invoked as `/feature` or `/feature {feature-name}`. Drives an interactive discovery process that produces a complete feature specification before any code is written.
+
+1. **Parse argument** — If `$ARGUMENTS` is empty, ask the user to name or describe the feature in a sentence. If a name is provided, use it as the working title. If the argument starts with `review`, switch to review mode (see below).
+
+2. **Check for existing feature docs** — Search `planning/features/` (or the configured planning path) for docs matching the feature name. If found, ask the user whether to continue refining the existing spec or start fresh. If continuing, load the existing docs as starting context.
+
+3. **Initial exploration** — Spawn exploration agents across all configured zones with `run_in_background: true`. Prompt them to:
+   - Identify systems, modules, and patterns relevant to the feature description
+   - Report existing code that the feature will interact with, extend, or depend on
+   - Surface architectural constraints or patterns the feature must follow
+   - Find related features already implemented that could serve as reference implementations
+
+4. **Iterative discovery** — Conduct a structured Q&A to flesh out the feature. Use `AskUserQuestion` for multi-choice questions and conversation for open-ended ones. Work through these areas, but **adapt the order and depth based on user responses** — skip what's not relevant, dig deeper where there's ambiguity:
+
+   **Problem & Purpose:**
+   - What problem does this solve? Who is it for?
+   - What does success look like? How will you know it's working?
+   - Are there existing workarounds or partial solutions?
+
+   **Scope & Boundaries:**
+   - What's the MVP — the minimum that delivers value?
+   - What's explicitly out of scope for now?
+   - Are there phases or milestones (MVP → v1 → full vision)?
+
+   **Behaviour & Requirements:**
+   - What are the key user stories or use cases?
+   - What are the acceptance criteria for each?
+   - What happens in error/edge cases?
+   - Are there performance, scale, or latency requirements?
+
+   **Dependencies & Integration:**
+   - What existing systems does this touch? (use agent findings to ground this)
+   - What external services, APIs, or data sources are involved?
+   - Are there ordering dependencies — things that must be built or changed first?
+   - Does this feature depend on other planned-but-not-built features?
+
+   **Technical Approach:**
+   - What's the proposed architecture? (suggest based on agent findings and existing patterns)
+   - What new interfaces, services, or data structures are needed?
+   - What existing code needs modification?
+   - Are there meaningful technical alternatives to evaluate?
+
+   **Testing Strategy:**
+   - What are the key test scenarios?
+   - What needs unit tests vs integration tests vs manual verification?
+   - Are there test data or fixture requirements?
+
+   **Risks & Unknowns:**
+   - What are you unsure about?
+   - What could go wrong? What are the biggest risks?
+   - Are there questions that need external input to answer?
+
+   **Keep iterating** until the user is satisfied that the feature is well-defined. After each major section, summarize what's been captured and ask if anything is missing or needs revision. If exploration agents surface relevant code or patterns, present findings and ask follow-up questions based on them.
+
+5. **Produce artifacts** — Once the discovery is complete, generate the feature documentation. Ask the user for approval before writing. Create a feature directory:
+
+   ```
+   planning/features/{feature-name}/
+   ├── spec.md               # Feature specification
+   ├── technical-design.md   # Technical design document
+   └── scope.md              # Scope, phases, and milestones
+   ```
+
+   **`spec.md`** — The feature specification:
+   ```markdown
+   # Feature: {Feature Name}
+
+   ## Problem Statement
+   {What problem this solves and for whom}
+
+   ## Success Criteria
+   {How you know the feature is working — measurable outcomes}
+
+   ## User Stories
+   - As a {role}, I want {action} so that {benefit}
+
+   ## Acceptance Criteria
+   - [ ] {AC item with clear pass/fail definition}
+
+   ## Out of Scope
+   - {What this feature explicitly does NOT cover}
+
+   ## Open Questions
+   - {Anything unresolved that needs further input}
+   ```
+
+   **`technical-design.md`** — The technical design:
+   ```markdown
+   # Technical Design: {Feature Name}
+
+   ## Overview
+   {One-paragraph summary of the technical approach}
+
+   ## Architecture
+   {How the feature fits into the existing system — reference agent zone findings}
+
+   ## Dependencies
+   ### Internal
+   - {Existing modules/services this depends on}
+   ### External
+   - {APIs, services, libraries}
+   ### Ordering
+   - {What must be built/changed before this feature}
+
+   ## Key Changes
+   ### New
+   - `{path}` — {description of new file/module}
+   ### Modified
+   - `{path}` — {what changes and why}
+
+   ## Interfaces & Data
+   {New interfaces, data structures, API contracts}
+
+   ## Alternatives Considered
+   {Other approaches evaluated and why they were rejected}
+
+   ## Risks
+   - **{Risk}** — {Impact and mitigation}
+   ```
+
+   **`scope.md`** — Scope and phasing:
+   ```markdown
+   # Scope: {Feature Name}
+
+   ## Phases
+
+   ### Phase 1: MVP
+   {Minimum viable scope that delivers value}
+   - [ ] {Deliverable}
+   - **Estimated complexity:** S/M/L
+
+   ### Phase 2: {Name}
+   {Next increment}
+   - [ ] {Deliverable}
+   - **Estimated complexity:** S/M/L
+
+   ## Task Breakdown
+   {Numbered tasks ready to become issues — each with summary, AC, and estimated complexity}
+
+   | # | Task | Depends On | Complexity |
+   |---|------|-----------|------------|
+   | 1 | {task} | — | S |
+   | 2 | {task} | 1 | M |
+
+   ## Testing Strategy
+   - **Unit:** {What gets unit tested}
+   - **Integration:** {What needs integration testing}
+   - **Manual:** {What requires manual verification}
+   ```
+
+6. **Offer next steps** — After writing the feature docs:
+   - Offer to create GitHub Issues (or tasks in the configured provider) from the task breakdown in `scope.md`
+   - Suggest `/discuss` to plan a sprint around this feature
+   - Suggest `/start` to begin work on the first task
+   - If there are open questions, highlight them and suggest resolving before starting implementation
+
+##### Review mode
+
+Invoked as `/feature review {feature-name}`.
+
+1. **Find feature docs** — Search `planning/features/` for the named feature. If not found, list available features and ask the user to pick one. If multiple matches, disambiguate.
+
+2. **Load all feature docs** — Read `spec.md`, `technical-design.md`, and `scope.md` for the feature.
+
+3. **Spawn exploration agents** — For each zone referenced in the technical design's dependencies or key changes, spawn an agent to check the current state of those areas. Prompt them to:
+   - Check if dependencies listed in the design are still accurate
+   - Check if referenced code has changed since the feature was planned
+   - Look for any new code or patterns that affect the feature's approach
+   - Check for implementations that partially or fully address tasks in the scope
+
+4. **Assess completeness** — Evaluate each document against a checklist:
+
+   **Spec completeness:**
+   - Does the problem statement clearly define the problem and audience?
+   - Are success criteria measurable and specific?
+   - Are acceptance criteria testable (clear pass/fail)?
+   - Are edge cases and error scenarios covered?
+   - Are out-of-scope items explicitly listed?
+
+   **Technical design completeness:**
+   - Are all dependencies identified (internal, external, ordering)?
+   - Are key changes mapped to specific files/paths?
+   - Are interfaces and data structures defined concretely?
+   - Does the architecture align with the project's existing patterns? (check against agent findings)
+   - Are risks identified with mitigations?
+
+   **Scope completeness:**
+   - Is the MVP clearly defined and separable from later phases?
+   - Does the task breakdown have enough detail to create issues from?
+   - Are task dependencies mapped?
+   - Is the testing strategy concrete?
+
+5. **Check for staleness** — Using agent findings, identify:
+   - Dependencies that have changed since the feature was planned
+   - Code that was referenced but has moved or been refactored
+   - New patterns or systems introduced that the design should account for
+   - Tasks in the scope that have already been partially implemented
+
+6. **Report findings** — Present a structured review:
+
+   ```
+   ## Feature Review: {Feature Name}
+
+   ### Status
+   {Overall assessment: Ready to implement / Needs refinement / Significant gaps}
+
+   ### Completeness
+   - **Spec:** {Complete / Gaps found}
+     - {List of missing or weak items}
+   - **Technical Design:** {Complete / Gaps found}
+     - {List of missing or weak items}
+   - **Scope:** {Complete / Gaps found}
+     - {List of missing or weak items}
+
+   ### Staleness
+   {Items that are outdated based on current codebase state}
+
+   ### Open Questions
+   {Unresolved items from the spec + any new questions raised by the review}
+
+   ### Recommendations
+   - {Specific actions to address gaps}
+   ```
+
+7. **Offer to fix** — For each gap or staleness issue found, offer to update the feature docs. Make changes interactively — show proposed updates and ask for approval before writing.
+
+#### 6f. Update CLAUDE.md
 
 Add a `## Workflow Configuration` section to the project's CLAUDE.md (create if it doesn't exist). This section acts as the "config" that the generated commands reference.
 
@@ -321,7 +553,7 @@ Add a `## Workflow Configuration` section to the project's CLAUDE.md (create if 
 - Task plans: `{planning_path}/{TASK_ID}.md`
 ```
 
-#### 6f. Configure Permissions
+#### 6g. Configure Permissions
 
 The generated commands need certain permissions to work without constant prompts. Check the project's `.claude/settings.json` (or `.claude/settings.local.json`) and offer to configure appropriate allow-lists.
 
@@ -368,7 +600,7 @@ Add any project-specific scripts found during codebase analysis (e.g., `Bash(mak
 
 Present the user with the proposed permission configuration and ask for approval before writing to `.claude/settings.json`. Explain that they can always adjust permissions later by editing the file directly.
 
-#### 6g. Git Hygiene Setup
+#### 6h. Git Hygiene Setup
 
 Based on the project type detected in Phase 3, check and offer to create or update git configuration files.
 
@@ -410,8 +642,8 @@ For all files in this step: show the proposed content, ask for approval, and onl
 After generating all files:
 
 1. List the files created and their paths
-2. Show a quick summary of what `/start` and `/resume` will do
-3. Suggest the user try `/start {EXAMPLE_TASK_ID}` to test it
+2. Show a quick summary of what each command does (`/feature`, `/discuss`, `/start`, `/resume`, `/review`)
+3. Suggest the user try `/feature` to spec out their first feature, or `/start {EXAMPLE_TASK_ID}` to begin an existing task
 4. Mention they can re-run `/bootstrap` to regenerate if needed
 
 ---

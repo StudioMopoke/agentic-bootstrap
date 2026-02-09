@@ -1,6 +1,6 @@
 # Agentic Bootstrap
 
-A global [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill that generates a complete AI-assisted development workflow for any project. Run `/bootstrap` once to configure task management, planning infrastructure, and four slash commands that drive a repeatable plan-build-test-ship cycle.
+A global [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill that generates a complete AI-assisted development workflow for any project. Run `/bootstrap` once to configure task management, planning infrastructure, and five slash commands that drive a repeatable plan-build-test-ship cycle.
 
 ## Overview
 
@@ -10,6 +10,7 @@ A global [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill tha
 
 | Artifact | Path | Purpose |
 |----------|------|---------|
+| `/feature` command | `.claude/commands/feature.md` | Feature specification and design |
 | `/start` command | `.claude/commands/start.md` | Begin work on a task |
 | `/resume` command | `.claude/commands/resume.md` | Continue after context loss |
 | `/review` command | `.claude/commands/review.md` | Pre-PR self-review |
@@ -31,6 +32,7 @@ flowchart TD
 
     subgraph commands ["Layer 2 — Commands (daily development)"]
         direction LR
+        CC["/feature"]
         D["/discuss"]
         E["/start"]
         F["/resume"]
@@ -52,6 +54,7 @@ flowchart TD
     style commands fill:#2c5282,color:#e2e8f0,stroke:#2b6cb0
     style infra fill:#276749,color:#e2e8f0,stroke:#2f855a
     style B fill:#2d3748,color:#e2e8f0,stroke:#4a5568
+    style CC fill:#2c5282,color:#e2e8f0,stroke:#2b6cb0
     style D fill:#2c5282,color:#e2e8f0,stroke:#2b6cb0
     style E fill:#2c5282,color:#e2e8f0,stroke:#2b6cb0
     style F fill:#2c5282,color:#e2e8f0,stroke:#2b6cb0
@@ -109,6 +112,7 @@ The four generated commands form a cycle. Tasks flow from planning through imple
 
 ```mermaid
 flowchart LR
+    feature["/feature\nSpec out the feature\nTechnical design\nScope & phasing"]
     discuss["/discuss\nPlan sprints\nBreak down tasks\nDesign architecture"]
     start["/start #N\nFetch task context\nCreate branch\nLoad planning docs\nSpawn zone agents"]
     implement["Implement\nWrite code\nBuild/test loop\nCommit progress"]
@@ -116,6 +120,8 @@ flowchart LR
     review["/review\nGather requirements\nDiff against AC\nStructured report"]
     pr["Create PR\nMerge\nClose issue"]
 
+    feature -- "spec, design,\ntask breakdown" --> discuss
+    feature -- "creates issues" --> start
     discuss -- "creates issues\n& task specs" --> start
     start --> implement
     implement -- "context lost?\nnew session?" --> resume
@@ -125,6 +131,7 @@ flowchart LR
     review -- "clean" --> pr
     pr -. "next task" .-> start
 
+    style feature fill:#744210,color:#e2e8f0,stroke:#975a16
     style discuss fill:#553c9a,color:#e2e8f0,stroke:#6b46c1
     style start fill:#2c5282,color:#e2e8f0,stroke:#2b6cb0
     style implement fill:#276749,color:#e2e8f0,stroke:#2f855a
@@ -134,6 +141,19 @@ flowchart LR
 ```
 
 ### What each command does
+
+**`/feature`** — Spec out a feature before building it. Runs an interactive discovery process grounded in codebase exploration:
+1. Spawns zone agents to understand what exists — relevant systems, patterns, dependencies, reference implementations
+2. Walks through structured Q&A: problem/purpose, scope/MVP, behaviour/AC, dependencies, technical approach, testing strategy, risks
+3. Keeps iterating until requirements and dependencies are fully fleshed out — summarizes after each section, asks what's missing
+4. Produces three documents: `spec.md` (what and why), `technical-design.md` (how), `scope.md` (phases, task breakdown, testing)
+5. Offers to create issues from the task breakdown and suggests `/discuss` for sprint planning or `/start` to begin
+
+**`/feature review {name}`** — Reviews an existing feature spec for completeness and staleness:
+1. Loads all feature docs and spawns agents to check the current codebase state against the design
+2. Evaluates completeness: are AC testable? Are dependencies identified? Is the MVP separable? Are risks mitigated?
+3. Checks for staleness: code that's moved, new patterns introduced, tasks already partially implemented
+4. Reports gaps and offers to update the docs interactively
 
 **`/start #N`** — Begin work on a task.
 1. Parses the task identifier (accepts `next` to auto-select the lowest unstarted issue)
@@ -305,8 +325,16 @@ This is how planning artifacts drive implementation through the full lifecycle, 
 
 ```mermaid
 flowchart TD
-    subgraph plan ["Planning Phase — /discuss"]
-        roadmap["Project Roadmap\nPhased implementation plan"]
+    subgraph feature_phase ["Feature Definition — /feature"]
+        feature_cmd["/feature 'payment processing'"]
+        explore["Explore Codebase\nZone agents identify\nexisting systems & patterns"]
+        qa["Iterative Q&A\nProblem, scope, behaviour,\ndependencies, risks"]
+        feature_spec["spec.md\nProblem, AC, user stories"]
+        tech_design["technical-design.md\nArchitecture, dependencies,\nkey changes, interfaces"]
+        scope_doc["scope.md\nPhases, task breakdown,\ntesting strategy"]
+    end
+
+    subgraph plan ["Sprint Planning — /discuss"]
         discuss_cmd["/discuss 'next sprint'"]
         sprint["Sprint Overview\n00_sprint_overview.md\nGoal, task table, dependencies"]
         specs["Task Specs\n01_task.md, 02_task.md, ...\nRequirements, AC, files to create"]
@@ -329,7 +357,16 @@ flowchart TD
         report["Structured Report\nBlocking / Warning / Nit\nWith file:line references"]
     end
 
-    roadmap --> discuss_cmd
+    feature_cmd --> explore
+    explore --> qa
+    qa --> feature_spec
+    qa --> tech_design
+    qa --> scope_doc
+
+    scope_doc -- "task breakdown\nfeeds sprint" --> discuss_cmd
+    tech_design -. "design context" .-> specs
+    feature_spec -. "AC" .-> specs
+
     discuss_cmd --> sprint
     sprint --> specs
     specs --> tdd
@@ -354,10 +391,16 @@ flowchart TD
     report -- "clean" --> merge["Merge PR\nCloses #42"]
     merge -. "update" .-> completed["COMPLETED.md\nTracks merged work"]
 
+    style feature_phase fill:#1a202c,color:#e2e8f0,stroke:#975a16
+    style feature_cmd fill:#744210,color:#e2e8f0
+    style explore fill:#744210,color:#e2e8f0
+    style qa fill:#744210,color:#e2e8f0
+    style feature_spec fill:#744210,color:#e2e8f0
+    style tech_design fill:#744210,color:#e2e8f0
+    style scope_doc fill:#744210,color:#e2e8f0
     style plan fill:#1a202c,color:#e2e8f0,stroke:#553c9a
     style exec fill:#1a202c,color:#e2e8f0,stroke:#2c5282
     style review_phase fill:#1a202c,color:#e2e8f0,stroke:#9c4221
-    style roadmap fill:#553c9a,color:#e2e8f0
     style discuss_cmd fill:#553c9a,color:#e2e8f0
     style sprint fill:#553c9a,color:#e2e8f0
     style specs fill:#553c9a,color:#e2e8f0
@@ -448,7 +491,13 @@ cd your-project
 claude
 > /bootstrap
 
-# Plan a sprint
+# Spec out a new feature
+> /feature payment processing
+
+# Review an existing feature spec
+> /feature review payment-processing
+
+# Plan a sprint from feature specs
 > /discuss next sprint
 
 # Start a task
