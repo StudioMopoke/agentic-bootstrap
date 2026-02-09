@@ -1,6 +1,12 @@
 # Bootstrap Agentic Workflow
 
-Set up an AI-assisted development workflow for this project. Generates `/start`, `/resume`, `/review`, `/discuss`, and `/feature` slash commands tailored to this codebase, plus a workflow configuration section for CLAUDE.md.
+Set up an AI-assisted development workflow for this project. Generates five slash commands tailored to this codebase, plus a workflow configuration section for CLAUDE.md.
+
+- `/feature` — Specify **what** to build: interactive feature specification, technical design, and scope planning
+- `/discuss` — Plan **when** and **how** to execute: sprint planning, task scheduling, backlog management
+- `/start` — Begin work on a task: fetch context, create branch, spawn zone agents
+- `/resume` — Continue work after a session break: reconstruct context from durable state
+- `/review` — Pre-PR self-review: evaluate changes against requirements and acceptance criteria
 
 ## Instructions
 
@@ -101,7 +107,7 @@ Present findings to the user:
 
 ### Phase 4: Agent Zone Definition
 
-This is the most important step. Define the exploration agents that `/start` and `/resume` will spawn.
+This is the most important step. Define the exploration agents that `/feature`, `/start`, `/resume`, and `/review` will spawn.
 
 Ask the user to describe the major areas of their codebase. Help them by suggesting based on Phase 3 findings.
 
@@ -109,7 +115,7 @@ For each zone, capture:
 - **Name**: Short label (e.g., "API Surface", "Core Logic", "Tests")
 - **Paths**: Which directories to explore
 - **Description**: What this zone covers (1-2 sentences)
-- **When to use**: Task types that should trigger this agent (e.g., "API changes", "bug investigation")
+- **Triggers**: Task types that should activate this agent (e.g., "API changes", "bug investigation")
 - **Dependencies/context** (optional): External services, APIs, or sibling repos this zone interacts with. Drawn from Phase 3 discovery — include relevant details so agents understand the integration boundaries (e.g., "calls the payments API via `pkg/payments/client.go`", "depends on shared-types from `../common-lib`")
 
 Aim for 3-6 zones. For very small projects (single-directory), 1-2 zones is fine (e.g., "Source" + "Tests"). For large monorepos, group related packages into composite zones rather than creating 10+ individual ones.
@@ -149,6 +155,11 @@ planning/
 ├── backlog/
 │   ├── README.md                # When to park/pull items
 │   └── {deferred-feature}.md
+├── features/
+│   └── {feature-name}/
+│       ├── spec.md              # Feature specification (created by /feature)
+│       ├── technical-design.md  # Technical design document
+│       └── scope.md             # Scope, phases, task breakdown
 └── sprints/
     └── sprint-{N}-{name}/
         ├── 00_sprint_overview.md # Sprint goal, task table, success criteria, out of scope
@@ -182,20 +193,6 @@ The `/start` command will create a per-task doc with:
 - Approach section (to fill during implementation)
 - Notes section (for investigation during development)
 
-#### Generate `/discuss` command (always):
-
-Always generate `.claude/commands/discuss.md` — a command for collaborative planning, sprint design, and task breakdown.
-
-The `/discuss` command should:
-1. Accept a topic, sprint name/number, or task ID as `$ARGUMENTS`. If empty, ask what they want to discuss.
-2. **Gather context** — Read whatever planning docs exist (project docs, sprint overviews, backlog), check recent git history, and fetch relevant task management context.
-3. **Adapt to the planning mode:**
-   - **Full planning:** Help plan sprints, break work into numbered tasks with requirements/AC/files/dependencies, generate sprint directories with task specs and TDD specs, manage the backlog.
-   - **Task-level:** Help think through a task's approach, update the per-task planning doc with decisions and notes.
-   - **None:** Freeform discussion — help reason through architecture, approach, or scope. Optionally write notes to a scratch file if the user wants to capture decisions.
-4. **Explore the codebase as needed** — Spawn exploration agents to answer questions that come up during discussion.
-5. **Produce artifacts** — Write planning docs, task specs, or notes based on what was discussed. Always ask before creating files.
-
 ---
 
 ### Phase 6: Generate Commands
@@ -206,7 +203,11 @@ Now generate the files. Create each one using the Write tool.
 
 Write to `.claude/commands/start.md`. The generated command should handle:
 
-1. **Parse argument** — Extract task identifier from `$ARGUMENTS`. Never make one up. **Include this guard in the generated `start.md`** — if `$ARGUMENTS` is empty or doesn't match the expected task ID pattern, ask the user rather than guessing.
+1. **Parse argument** — Extract task identifier from `$ARGUMENTS`. Support the following inputs:
+   - **`next`** — Auto-select the next task to work on. Query the configured provider for open/unassigned tasks, check `git branch -a` to filter out tasks that already have branches, and pick the lowest/highest-priority remaining task. Show the user which task was selected and ask for confirmation before proceeding.
+   - **Task ID** — A task identifier matching the configured pattern (e.g., `#42`, `PROJ-123`, `ENG-456`).
+   - **URL** — A full URL to the task in the provider's UI.
+   - **Empty or unrecognizable** — Ask the user for the task identifier. Never guess or make one up. **Include this guard in the generated `start.md`**.
 2. **Fetch task context** — Using the configured provider, get summary, description, status, AC, priority, parent/epic, linked tasks.
 3. **Guard against duplicate work** — Check `git branch -a` for existing branches. Check for existing planning docs. Suggest `/resume` if work exists.
 4. **Create feature branch** — Derive short name from task summary, check for parent/epic branch, create with configured prefix and base branch.
@@ -238,16 +239,23 @@ Include workflow reminders: commit format, task management updates, agent follow
 
 #### 6c. Generate `discuss.md`
 
-Write to `.claude/commands/discuss.md`. The generated command should handle:
+Write to `.claude/commands/discuss.md`. This command handles **execution planning** — sprint structure, task scheduling, backlog management. It does NOT handle feature specification (that's `/feature`).
 
-1. **Parse argument** — Topic, sprint name/number, or task ID from `$ARGUMENTS`. If empty, ask what to discuss.
-2. **Gather context** — Read whatever planning docs exist, check git history, fetch task management context as relevant.
+Include this description at the top of the generated command:
+> Plan **when** and **how** to execute work: sprint planning, task scheduling, and backlog management. For specifying **what** to build, use `/feature` instead.
+
+The generated command should handle:
+
+1. **Parse argument** — Accepts a sprint name/number, task ID, or topic from `$ARGUMENTS`. If empty, ask what they want to plan.
+2. **Gather context** — Read existing planning docs, feature specs in `planning/features/`, check git history, fetch task management context as relevant.
 3. **Adapt to planning mode:**
-   - **Full planning:** Plan sprints, break work into tasks with specs and TDD, manage backlog.
-   - **Task-level:** Think through a task's approach, update planning doc with decisions.
-   - **None:** Freeform discussion, optionally capture notes.
-4. **Explore as needed** — Spawn agents to answer codebase questions that arise.
-5. **Produce artifacts** — Write planning docs, specs, or notes. Always ask before creating files.
+   - **Full planning:** Plan sprints from feature specs and roadmap — break work into numbered tasks with requirements, AC, file lists, dependencies, and TDD specs. Create sprint directories. Manage the backlog (park, prioritize, pull items).
+   - **Task-level:** Discuss a specific task's implementation approach, update the per-task planning doc with decisions and notes.
+   - **None:** Freeform discussion about execution, scheduling, or priorities. Optionally capture notes.
+4. **Leverage feature specs** — When planning a sprint, check `planning/features/` for feature specs that provide task breakdowns, dependencies, and scope. Use these as input rather than re-deriving requirements.
+5. **Explore as needed** — Spawn agents to answer codebase questions that arise during planning.
+6. **Produce artifacts** — Write sprint overviews, task specs, TDD specs, or backlog items. Always ask before creating files.
+7. **Offer next steps** — Suggest `/start` to begin the first task, or `/feature` if requirements need to be specified first.
 
 #### 6d. Generate `review.md`
 
@@ -282,14 +290,19 @@ Write to `.claude/commands/review.md`. The generated command should handle:
    - **Suggestions:** Optional improvements that aren't blocking (not required to address before merge).
 7. **Offer next steps** — Based on findings:
    - If blocking issues: offer to fix them now.
-   - If clean: suggest creating a PR (offer to run `/commit` if uncommitted changes exist).
+   - If clean: suggest creating a PR. If uncommitted changes exist, offer to commit them first.
    - If task management is configured: offer to add a review-complete comment to the task.
 
 Include a note: `/review` is for pre-PR self-review. It's not a replacement for team code review, but helps catch issues before involving reviewers.
 
 #### 6e. Generate `feature.md`
 
-Write to `.claude/commands/feature.md`. The generated command should handle two modes: **specification mode** (default) and **review mode**.
+Write to `.claude/commands/feature.md`. This command handles **feature specification** — defining what to build, why, and at what scope. It does NOT handle sprint planning or task scheduling (that's `/discuss`).
+
+Include this description at the top of the generated command:
+> Specify **what** to build: interactive feature specification, technical design, and scope planning. For planning **when** and **how** to execute, use `/discuss` instead. Use `/feature review {name}` to review an existing feature spec.
+
+The generated command should handle two modes: **specification mode** (default) and **review mode**.
 
 ##### Specification mode (default)
 
@@ -528,6 +541,15 @@ Add a `## Workflow Configuration` section to the project's CLAUDE.md (create if 
 ```markdown
 ## Workflow Configuration
 
+### Commands
+| Command | Purpose |
+|---------|---------|
+| `/feature` | Specify **what** to build — feature spec, technical design, scope |
+| `/discuss` | Plan **when/how** to execute — sprint planning, task scheduling, backlog |
+| `/start` | Begin a task — fetch context, create branch, spawn zone agents |
+| `/resume` | Continue after a break — reconstruct context from durable state |
+| `/review` | Pre-PR self-review — evaluate changes against requirements |
+
 ### Task Management
 - **Provider:** {provider}
 [PROVIDER-SPECIFIC CONFIG]
@@ -550,7 +572,9 @@ Add a `## Workflow Configuration` section to the project's CLAUDE.md (create if 
 
 [IF PLANNING DOCS:]
 ### Planning
-- Task plans: `{planning_path}/{TASK_ID}.md`
+- **Feature specs:** `planning/features/{feature-name}/` (created by `/feature`)
+- **Sprint plans:** `planning/sprints/sprint-{N}-{name}/` (created by `/discuss`)
+- **Task plans:** `{planning_path}/{TASK_ID}.md`
 ```
 
 #### 6g. Configure Permissions

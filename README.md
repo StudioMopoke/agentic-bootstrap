@@ -10,11 +10,11 @@ A global [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill tha
 
 | Artifact | Path | Purpose |
 |----------|------|---------|
-| `/feature` command | `.claude/commands/feature.md` | Feature specification and design |
+| `/feature` command | `.claude/commands/feature.md` | Specify **what** to build — feature spec, design, scope |
+| `/discuss` command | `.claude/commands/discuss.md` | Plan **when/how** to execute — sprints, scheduling, backlog |
 | `/start` command | `.claude/commands/start.md` | Begin work on a task |
 | `/resume` command | `.claude/commands/resume.md` | Continue after context loss |
 | `/review` command | `.claude/commands/review.md` | Pre-PR self-review |
-| `/discuss` command | `.claude/commands/discuss.md` | Sprint planning, task design, architecture |
 | Workflow config | `CLAUDE.md` (appended section) | Zone definitions, conventions, provider config |
 | Permissions | `.claude/settings.json` | Safe defaults for agentic operation |
 | Planning scaffold | `planning/` (optional) | Sprint directories, task specs, TDD specs |
@@ -73,13 +73,13 @@ When you run `/bootstrap`, it walks through seven phases to tailor the workflow 
 
 ```mermaid
 flowchart TD
-    P1["Phase 1: Task Management\nJira / Linear / GitHub Issues / Asana / None"]
-    P2["Phase 2: Git Conventions\nBranch format, commit format, base branch"]
-    P3["Phase 3: Codebase Analysis\nDetect stack, map directories,\ndiscover external dependencies"]
-    P4["Phase 4: Agent Zones\nDefine 3-6 exploration zones\nmapped to codebase areas"]
+    P1["Phase 1: Task Management Discovery\nJira / Linear / GitHub Issues / Asana / None"]
+    P2["Phase 2: Git Conventions Discovery\nBranch format, commit format, base branch"]
+    P3["Phase 3: Codebase Analysis\nDetect stack, map directories,\ndiscover dependencies, check existing config"]
+    P4["Phase 4: Agent Zone Definition\nDefine exploration zones\nmapped to codebase areas"]
     P5["Phase 5: Planning Structure\nFull sprints / Task-level / None\nScaffold directories, TDD config"]
-    P6["Phase 6: Generate\nWrite commands, update CLAUDE.md,\nconfigure permissions, git hygiene"]
-    P7["Phase 7: Verify\nList created files, suggest first /start"]
+    P6["Phase 6: Generate Commands\nWrite commands, update CLAUDE.md,\nconfigure permissions, git hygiene"]
+    P7["Phase 7: Verify and Report\nList created files,\nsuggest /feature or /start"]
 
     P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7
 
@@ -96,24 +96,24 @@ flowchart TD
 
 | Phase | What it does | Key decisions |
 |-------|-------------|---------------|
-| **1. Task Management** | Discovers your issue tracker and how to connect to it | Provider choice, connection details (instance URL, project key, repo, etc.), MCP vs CLI fallback |
-| **2. Git Conventions** | Captures branching and commit standards | Branch prefix format, commit message format, base branch detection, AI marker preference |
-| **3. Codebase Analysis** | Explores the repo to understand its structure | Stack detection, key directories, external services/APIs, sibling repos |
-| **4. Agent Zones** | Defines parallel exploration agents mapped to codebase areas | Zone names, paths, triggers, integration boundaries (see [Agent Zones](#agent-zones)) |
+| **1. Task Management Discovery** | Discovers your issue tracker and how to connect to it | Provider choice, connection details (instance URL, project key, repo, etc.), MCP vs CLI fallback |
+| **2. Git Conventions Discovery** | Captures branching and commit standards | Branch prefix format, commit message format, base branch detection, AI marker preference |
+| **3. Codebase Analysis** | Explores the repo to understand its structure | Stack detection, key directories, external services/APIs, sibling repos, checks for existing CLAUDE.md and commands |
+| **4. Agent Zone Definition** | Defines parallel exploration agents mapped to codebase areas | Zone names, paths, triggers, integration boundaries (see [Agent Zones](#agent-zones)) |
 | **5. Planning Structure** | Chooses planning depth and scaffolds directories | Full sprints vs task-level vs none, TDD integration, sprint naming (see [Planning & TDD](#planning--tdd-flow)) |
-| **6. Generate** | Writes all artifacts to the project | Slash commands, CLAUDE.md config, permissions, `.gitignore`/`.gitattributes`/LFS |
-| **7. Verify** | Confirms setup and suggests first task | Lists created files, proposes `/start {TASK_ID}` |
+| **6. Generate Commands** | Writes all artifacts to the project | Slash commands, CLAUDE.md config, permissions, `.gitignore`/`.gitattributes`/LFS |
+| **7. Verify and Report** | Confirms setup and suggests first task | Lists created files, summarizes commands, proposes `/feature` or `/start {TASK_ID}` |
 
 Re-running `/bootstrap` is safe — it detects existing artifacts and replaces the workflow config section in CLAUDE.md rather than duplicating it.
 
 ## Task Lifecycle
 
-The four generated commands form a cycle. Tasks flow from planning through implementation to review.
+The five generated commands form a lifecycle. Features flow from specification through planning and implementation to review.
 
 ```mermaid
 flowchart LR
-    feature["/feature\nSpec out the feature\nTechnical design\nScope & phasing"]
-    discuss["/discuss\nPlan sprints\nBreak down tasks\nDesign architecture"]
+    feature["/feature\nWhat to build\nSpec, design, scope"]
+    discuss["/discuss\nWhen & how to execute\nSprints, scheduling, backlog"]
     start["/start #N\nFetch task context\nCreate branch\nLoad planning docs\nSpawn zone agents"]
     implement["Implement\nWrite code\nBuild/test loop\nCommit progress"]
     resume["/resume\nDetect branch\nRe-fetch context\nCheck progress\nSpawn zone agents"]
@@ -142,11 +142,11 @@ flowchart LR
 
 ### What each command does
 
-**`/feature`** — Spec out a feature before building it. Runs an interactive discovery process grounded in codebase exploration:
+**`/feature`** — Specify **what** to build. Runs an interactive discovery process grounded in codebase exploration:
 1. Spawns zone agents to understand what exists — relevant systems, patterns, dependencies, reference implementations
 2. Walks through structured Q&A: problem/purpose, scope/MVP, behaviour/AC, dependencies, technical approach, testing strategy, risks
 3. Keeps iterating until requirements and dependencies are fully fleshed out — summarizes after each section, asks what's missing
-4. Produces three documents: `spec.md` (what and why), `technical-design.md` (how), `scope.md` (phases, task breakdown, testing)
+4. Produces three documents in `planning/features/{name}/`: `spec.md` (what and why), `technical-design.md` (how), `scope.md` (phases, task breakdown, testing)
 5. Offers to create issues from the task breakdown and suggests `/discuss` for sprint planning or `/start` to begin
 
 **`/feature review {name}`** — Reviews an existing feature spec for completeness and staleness:
@@ -171,20 +171,20 @@ flowchart LR
 3. Checks progress: commits on branch, changed files, completed AC items, planning doc status
 4. Re-spawns zone agents for fresh codebase context
 5. Reports what's done and what to work on next
+6. Continues work with workflow reminders (commit format, task updates, agent follow-up)
 
 **`/review`** — Pre-PR self-review against requirements.
 1. Gathers requirements from all sources (issue tracker + planning docs + task specs)
 2. Collects the full diff (`base..HEAD`) plus any uncommitted changes
 3. Spawns deep review agents per affected zone
-4. Evaluates: completeness (AC checklist), correctness, architecture compliance, security, performance, error handling, tests, style
+4. Evaluates: completeness (AC checklist), correctness, security, performance, error handling, tests, style and consistency, dependency/integration boundaries
 5. Reports findings grouped by severity (blocking / warning / nit) with file and line references
 6. Offers next steps — fix issues, create PR, or update planning docs
 
-**`/discuss`** — Collaborative planning. Adapts to what you need:
-- **Sprint planning**: Break a roadmap phase into numbered tasks with requirements, AC, file lists, dependencies, and complexity ratings. Creates the sprint directory, task specs, TDD specs, and optionally GitHub Issues.
-- **Task design**: Think through a specific task's approach, edge cases, and risks. Update the planning doc with decisions.
-- **Architecture**: Reason through design trade-offs with codebase exploration for grounding.
-- **Backlog**: Review, prioritize, and pull deferred items into sprint planning.
+**`/discuss`** — Plan **when** and **how** to execute. Takes feature specs and turns them into actionable sprint plans:
+- **Full planning**: Plan sprints from feature specs and roadmap — break work into numbered tasks with requirements, AC, file lists, dependencies, and TDD specs. Creates sprint directories. Manages backlog (parking, prioritizing, pulling deferred items).
+- **Task-level**: Discuss a specific task's implementation approach, update the per-task planning doc with decisions.
+- **None**: Freeform discussion about execution, scheduling, or priorities. Optionally capture notes.
 
 ## Context Hydration
 
@@ -233,11 +233,11 @@ This means **sessions are disposable**. You can close Claude Code, come back day
 
 ## Agent Zones
 
-During bootstrap, you define 3-6 **zones** — areas of your codebase that map to distinct concerns. Each command spawns zone-specific exploration agents in parallel, keeping the main context window lean while grounding decisions in real code.
+During bootstrap, you define **zones** — areas of your codebase that map to distinct concerns. Aim for 3-6 zones for most projects, or 1-2 for small single-directory projects. Each command spawns zone-specific exploration agents in parallel, keeping the main context window lean while grounding decisions in real code.
 
 ```mermaid
 flowchart TD
-    command["/start or /resume"]
+    command["/feature, /start, /resume, or /review"]
     task["Task: Implement payment webhook handler"]
 
     command --> task
@@ -297,7 +297,7 @@ Bootstrap offers three planning modes. The mode determines how much structure `/
 |------|----------|-------------------|
 | **Full project planning** | Greenfield projects, phased roadmaps | Sprint directories, task specs with AC, TDD specs, backlog management |
 | **Task-level only** | Established codebases with external task management | Per-task planning doc with context, approach, and notes |
-| **None** | Quick fixes, well-defined external specs | No local planning docs — commands use the issue tracker alone |
+| **None** | Well-defined external specs, quick fixes | No local planning docs — relies entirely on the task management system |
 
 ### Full planning structure
 
@@ -307,15 +307,20 @@ When full planning is enabled, `/discuss` creates a structured sprint directory:
 planning/
 ├── {NN}_{topic}.md                  # Project-level docs (architecture, features, etc.)
 ├── backlog/
-│   └── README.md                    # Guidelines for parking/pulling deferred work
+│   ├── README.md                    # Guidelines for parking/pulling deferred work
+│   └── {deferred-feature}.md        # Parked items from sprint discussions
+├── features/
+│   └── {feature-name}/
+│       ├── spec.md                  # Feature spec: problem, AC, user stories
+│       ├── technical-design.md      # Architecture, dependencies, key changes
+│       └── scope.md                 # Phases, task breakdown, testing strategy
 └── sprints/
     └── sprint-{N}-{name}/
         ├── 00_sprint_overview.md    # Goal, task table, dependencies, success criteria
-        ├── 01_{task}.md             # Task spec: requirements, AC, files, API surface
-        ├── 02_{task}.md
-        ├── ...
+        ├── {NN}_{task}.md           # Task spec: requirements, AC, files, API surface
         ├── COMPLETED.md             # Tracks merged work
         └── tdd/
+            ├── README.md            # TDD overview for the sprint
             └── phase-{NN}-{name}.md # Test categories, fixtures, coverage goals
 ```
 
@@ -325,7 +330,7 @@ This is how planning artifacts drive implementation through the full lifecycle, 
 
 ```mermaid
 flowchart TD
-    subgraph feature_phase ["Feature Definition — /feature"]
+    subgraph feature_phase ["What to Build — /feature"]
         feature_cmd["/feature 'payment processing'"]
         explore["Explore Codebase\nZone agents identify\nexisting systems & patterns"]
         qa["Iterative Q&A\nProblem, scope, behaviour,\ndependencies, risks"]
@@ -334,7 +339,7 @@ flowchart TD
         scope_doc["scope.md\nPhases, task breakdown,\ntesting strategy"]
     end
 
-    subgraph plan ["Sprint Planning — /discuss"]
+    subgraph plan ["When & How to Execute — /discuss"]
         discuss_cmd["/discuss 'next sprint'"]
         sprint["Sprint Overview\n00_sprint_overview.md\nGoal, task table, dependencies"]
         specs["Task Specs\n01_task.md, 02_task.md, ...\nRequirements, AC, files to create"]
@@ -466,7 +471,7 @@ interface PaymentWebhookHandler {
 | Provider | Connection | Task ID Pattern | Integration |
 |----------|-----------|----------------|-------------|
 | **GitHub Issues** | Repository (auto-detected from remote) | `#123` | `gh` CLI |
-| **Jira** | Instance URL + Cloud ID + project key | `PROJ-123` | Atlassian MCP or CLI |
+| **Jira** | Instance URL + Cloud ID + project key | `PROJ-123` | Atlassian MCP tools or CLI |
 | **Linear** | Team identifier | `ENG-123` | Linear MCP or CLI |
 | **Asana** | Workspace GID + project GID | `1234567890123` | Asana MCP or CLI |
 | **None** | — | Free-form | Manual task descriptions |
@@ -475,13 +480,35 @@ MCP tools are preferred when available. Commands fall back to CLI tools or manua
 
 ## Installation
 
-The bootstrap skill is a global Claude Code command. Place `bootstrap.md` in your user-level commands directory:
+### Via npm (recommended)
 
-```
-~/.claude/commands/bootstrap.md
+```bash
+npx @studiomopoke/agentic-bootstrap install
 ```
 
-Then run `/bootstrap` in any project to set up the workflow.
+This copies the `/bootstrap` command into your Claude Code commands directory (`~/.claude/commands/`).
+
+```bash
+# Update to latest version
+npx @studiomopoke/agentic-bootstrap@latest update
+
+# Uninstall
+npx @studiomopoke/agentic-bootstrap uninstall
+```
+
+### Manual
+
+Download `bootstrap.md` and place it in your user-level commands directory:
+
+```bash
+mkdir -p ~/.claude/commands
+curl -o ~/.claude/commands/bootstrap.md \
+  https://raw.githubusercontent.com/StudioMopoke/agentic-bootstrap/main/bootstrap.md
+```
+
+### Verify
+
+Open Claude Code in any project and run `/bootstrap`.
 
 ## Usage
 
@@ -523,4 +550,8 @@ Re-running `/bootstrap` is safe — it detects existing artifacts and updates ra
 
 **Planning artifacts are machine-readable contracts.** Sprint overviews, task specs, and TDD specs aren't just documentation — they're structured inputs that commands consume to know what to build, what to test, and when the work is done.
 
-**Permissions default to safe.** Bootstrap configures allow-lists for non-destructive operations (read, edit, build, test) and asks before enabling anything destructive (push, reset, delete).
+**Permissions default to safe.** Bootstrap configures allow-lists for non-destructive operations (read, edit, build, test) and asks before enabling anything destructive (push, reset, delete, dependency installation).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
