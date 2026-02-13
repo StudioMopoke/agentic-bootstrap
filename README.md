@@ -12,11 +12,12 @@ A global [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill tha
 |----------|------|---------|
 | `/feature` command | `.claude/commands/feature.md` | Specify **what** to build — feature spec, design, scope |
 | `/discuss` command | `.claude/commands/discuss.md` | Plan **when/how** to execute — sprints, scheduling, backlog |
-| `/start` command | `.claude/commands/start.md` | Begin work on a task |
+| `/start` command | `.claude/commands/start.md` | Begin work on a task (supports auto mode) |
 | `/resume` command | `.claude/commands/resume.md` | Continue after context loss |
 | `/review` command | `.claude/commands/review.md` | Pre-PR self-review |
 | Workflow config | `CLAUDE.md` (appended section) | Zone definitions, conventions, provider config |
 | Permissions | `.claude/settings.json` | Safe defaults for agentic operation |
+| Utility scripts | `scripts/issue.py`, `scripts/next-issue.py`, `scripts/project.py` | GitHub issue management, next-task selection, project board ops (GitHub Issues only) |
 | Planning scaffold | `planning/` (optional) | Sprint directories, task specs, TDD specs |
 | Git hygiene | `.gitignore`, `.gitattributes` | Stack-appropriate defaults |
 
@@ -73,7 +74,7 @@ When you run `/bootstrap`, it walks through seven phases to tailor the workflow 
 
 ```mermaid
 flowchart TD
-    P1["Phase 1: Task Management Discovery\nJira / Linear / GitHub Issues / Asana / None"]
+    P1["Phase 1: Task Management Discovery\nGitHub Issues (recommended) / Jira / Linear / Asana / None"]
     P2["Phase 2: Git Conventions Discovery\nBranch format, commit format, base branch"]
     P3["Phase 3: Codebase Analysis\nDetect stack, map directories,\ndiscover dependencies, check existing config"]
     P4["Phase 4: Agent Zone Definition\nDefine exploration zones\nmapped to codebase areas"]
@@ -96,12 +97,12 @@ flowchart TD
 
 | Phase | What it does | Key decisions |
 |-------|-------------|---------------|
-| **1. Task Management Discovery** | Discovers your issue tracker and how to connect to it | Provider choice, connection details (instance URL, project key, repo, etc.), MCP vs CLI fallback |
+| **1. Task Management Discovery** | Discovers your issue tracker and how to connect to it | Provider choice (GitHub Issues recommended), connection details, GitHub Projects integration, MCP vs CLI fallback |
 | **2. Git Conventions Discovery** | Captures branching and commit standards | Branch prefix format, commit message format, base branch detection, AI marker preference |
-| **3. Codebase Analysis** | Explores the repo to understand its structure | Stack detection, key directories, external services/APIs, sibling repos, checks for existing CLAUDE.md and commands |
+| **3. Codebase Analysis** | Explores the repo to understand its structure | Stack detection, build/test command detection, key directories, external services/APIs, sibling repos, checks for existing CLAUDE.md and commands |
 | **4. Agent Zone Definition** | Defines parallel exploration agents mapped to codebase areas | Zone names, paths, triggers, integration boundaries (see [Agent Zones](#agent-zones)) |
 | **5. Planning Structure** | Chooses planning depth and scaffolds directories | Full sprints vs task-level vs none, TDD integration, sprint naming (see [Planning & TDD](#planning--tdd-flow)) |
-| **6. Generate Commands** | Writes all artifacts to the project | Slash commands, CLAUDE.md config, permissions, `.gitignore`/`.gitattributes`/LFS |
+| **6. Generate Commands** | Writes all artifacts to the project | Slash commands, CLAUDE.md config, permissions, utility scripts (GitHub Issues), `.gitignore`/`.gitattributes`/LFS |
 | **7. Verify and Report** | Confirms setup and suggests first task | Lists created files, summarizes commands, proposes `/feature` or `/start {TASK_ID}` |
 
 Re-running `/bootstrap` is safe — it detects existing artifacts and replaces the workflow config section in CLAUDE.md rather than duplicating it.
@@ -119,6 +120,8 @@ flowchart LR
     resume["/resume\nDetect branch\nRe-fetch context\nCheck progress\nSpawn zone agents"]
     review["/review\nGather requirements\nDiff against AC\nStructured report"]
     pr["Create PR\nMerge\nClose issue"]
+    verify["Auto: Verify\nBuild + Test + AC check"]
+    autopr["Auto: Commit\nPush → PR → Merge"]
 
     feature -- "spec, design,\ntask breakdown" --> discuss
     feature -- "creates issues" --> start
@@ -127,6 +130,10 @@ flowchart LR
     implement -- "context lost?\nnew session?" --> resume
     resume --> implement
     implement -- "feature complete" --> review
+    implement -- "auto mode" --> verify
+    verify -- "pass" --> autopr
+    verify -- "fail (retry)" --> implement
+    autopr -. "/start auto next" .-> start
     review -- "blocking issues" --> implement
     review -- "clean" --> pr
     pr -. "next task" .-> start
@@ -138,6 +145,8 @@ flowchart LR
     style resume fill:#2c5282,color:#e2e8f0,stroke:#2b6cb0
     style review fill:#9c4221,color:#e2e8f0,stroke:#c05621
     style pr fill:#276749,color:#e2e8f0,stroke:#2f855a
+    style verify fill:#2d3748,color:#e2e8f0,stroke:#4a5568
+    style autopr fill:#2d3748,color:#e2e8f0,stroke:#4a5568
 ```
 
 ### What each command does
@@ -155,15 +164,16 @@ flowchart LR
 3. Checks for staleness: code that's moved, new patterns introduced, tasks already partially implemented
 4. Reports gaps and offers to update the docs interactively
 
-**`/start #N`** — Begin work on a task.
-1. Parses the task identifier (accepts `next` to auto-select the lowest unstarted issue)
+**`/start #N`** — Begin work on a task. Supports **auto mode** (`/start auto #N`) for fully autonomous task completion.
+1. Parses the task identifier (accepts `next`, `rnext`/`next ready`, or `auto` flag for autonomous mode)
 2. Fetches task context from the configured provider (title, description, AC, labels, links)
 3. Guards against duplicate work (checks for existing branches and planning docs)
 4. Creates a feature branch using the configured naming convention
 5. Loads planning docs — surfaces the task spec, AC, and TDD specs if they exist
 6. Spawns zone exploration agents in parallel (background)
 7. Transitions the task to in-progress
-8. Reports a setup summary and waits for agent findings before starting work
+8. Reports a setup summary and waits for agent findings before starting work (auto mode skips the wait and begins immediately)
+9. **(Auto mode only)** After implementation: verify (build + test + AC check), commit, push, create PR, merge, and report
 
 **`/resume`** — Continue after a session break. All durable state lives in git, the issue tracker, and planning docs — not in the conversation. `/resume` reconstructs context from these sources:
 1. Detects the current branch and extracts the task ID
@@ -192,7 +202,7 @@ Every command automatically assembles context from multiple sources. The human n
 
 ```mermaid
 flowchart TD
-    branch["Git Branch\nfeature/{TASK_ID}-name"]
+    branch["Git Branch\nfeature/42-short-name"]
     taskid["Task ID\nextracted from branch"]
 
     subgraph sources ["Context Sources"]
@@ -468,15 +478,15 @@ interface PaymentWebhookHandler {
 
 ## Supported Providers
 
-| Provider | Connection | Task ID Pattern | Integration |
-|----------|-----------|----------------|-------------|
-| **GitHub Issues** | Repository (auto-detected from remote) | `#123` | `gh` CLI |
-| **Jira** | Instance URL + Cloud ID + project key | `PROJ-123` | Atlassian MCP tools or CLI |
-| **Linear** | Team identifier | `ENG-123` | Linear MCP or CLI |
-| **Asana** | Workspace GID + project GID | `1234567890123` | Asana MCP or CLI |
-| **None** | — | Free-form | Manual task descriptions |
+| Provider | Connection | Task ID Pattern | Integration | Support Level |
+|----------|-----------|----------------|-------------|---------------|
+| **GitHub Issues** | Repository (auto-detected from remote) | `#123` | `gh` CLI + utility scripts | **Full** — auto mode, project boards, utility scripts |
+| **Jira** | Instance URL + Cloud ID + project key | `PROJ-123` | Atlassian MCP tools or CLI | Basic — task fetch, status transitions |
+| **Linear** | Team identifier | `ENG-123` | Linear MCP or CLI | Basic — task fetch, status transitions |
+| **Asana** | Workspace GID + project GID | `1234567890123` | Asana MCP or CLI | Basic — task fetch, status transitions |
+| **None** | — | Free-form | Manual task descriptions | Manual |
 
-MCP tools are preferred when available. Commands fall back to CLI tools or manual workflows when they're not.
+GitHub Issues is the recommended provider with full support for auto mode, GitHub Projects board integration, and generated utility scripts. Other providers support basic task fetching and status transitions — MCP tools are preferred when available, with CLI fallback.
 
 ## Installation
 
@@ -531,6 +541,11 @@ claude
 > /start #42
 > /start next          # auto-selects lowest unstarted issue
 
+# Auto mode — autonomous implement, verify, commit, push, PR, merge
+> /start auto 42       # auto mode for a specific task
+> /start auto next     # auto mode + auto-select next task
+> /start auto rnext    # auto mode + next "Ready" task from project board
+
 # Resume after a break
 > /resume
 
@@ -539,6 +554,27 @@ claude
 ```
 
 Re-running `/bootstrap` is safe — it detects existing artifacts and updates rather than duplicates.
+
+## Auto Mode
+
+Auto mode makes the entire task lifecycle autonomous. Instead of stopping for confirmations, the agent implements the task, verifies it, and ships it — all in one run.
+
+```
+/start auto next     →  pick task → implement → build → test → AC check → commit → push → PR → merge
+/start auto 42       →  same flow for a specific issue
+/start auto rnext    →  pick from project board "Ready" column (requires GitHub Projects)
+```
+
+**What auto mode does after implementation:**
+
+1. **Verify** — Runs the project's build command, test suite, and maps acceptance criteria to the diff. If any check fails, retries up to 3 times before handing back to the user.
+2. **Commit** — Stages changed files and commits with the configured format.
+3. **Push** — Pushes the feature branch to the remote.
+4. **Create PR** — Opens a pull request with a summary and AC checklist in the body.
+5. **Merge** — Squash-merges the PR and deletes the branch. If merge fails (branch protection, required reviews), leaves the PR open.
+6. **Report** — Displays a summary with task info, files changed, verification results, and PR link. Suggests `/start auto next` for the next task.
+
+Auto mode requires `git push` and `gh pr merge` permissions — bootstrap will ask about these during setup. It works best with GitHub Issues as the task provider, where utility scripts handle issue assignment, next-task selection, and project board updates automatically.
 
 ## Design Principles
 
