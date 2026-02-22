@@ -1,12 +1,13 @@
 # Bootstrap Agentic Workflow
 
-Set up an AI-assisted development workflow for this project. Generates five slash commands tailored to this codebase, plus a workflow configuration section for CLAUDE.md.
+Set up an AI-assisted development workflow for this project. Generates six slash commands tailored to this codebase, plus a workflow configuration section for CLAUDE.md.
 
 - `/feature` — Specify **what** to build: interactive feature specification, technical design, and scope planning
 - `/discuss` — Plan **when** and **how** to execute: sprint planning, task scheduling, backlog management
 - `/start` — Begin work on a task: fetch context, create branch, spawn zone agents
 - `/resume` — Continue work after a session break: reconstruct context from durable state
 - `/review` — Pre-PR self-review: evaluate changes against requirements and acceptance criteria
+- `/sync` — Pull latest changes and rebase current branch onto main
 
 ## Instructions
 
@@ -52,6 +53,15 @@ Based on their answer, ask for connection details:
       2. Get `STATUS_FIELD_ID` and `STATUS_OPTIONS`: `gh project field-list {PROJECT_NUM} --owner {PROJECT_OWNER} --format json` — find the "Status" field, extract its `id` as `STATUS_FIELD_ID`, and build `STATUS_OPTIONS` as a map of `{status_name: option_id}` from the field's options
     - If discovery fails (permissions, project not found, etc.), fall back gracefully — skip project board features and note that `scripts/project.py` and the `ready` mode of `scripts/next-issue.py` will not be generated. The rest of the workflow still works.
   - Store: `REPO`, `PROJECT_NUM`, `PROJECT_OWNER`, `PROJECT_ID`, `STATUS_FIELD_ID`, `STATUS_OPTIONS`
+- **GitHub App integration (optional):**
+  - Ask: "Do you use a GitHub App for API authentication? (This provides a separate rate limit pool from your personal token — useful for CI/CD and bulk operations.)"
+  - If yes:
+    - Capture **App ID** (found in the GitHub App settings page)
+    - Capture **Installation ID** (the ID of the app's installation on the org/user — can be found via `curl -H "Authorization: Bearer <jwt>" https://api.github.com/app/installations`)
+    - Capture **Private key path** (relative path to the `.pem` file, e.g., `keys/my-app.private-key.pem`)
+    - Verify `pyjwt` and `cryptography` packages are available: run `python3 -c "import jwt"`. If not available, note that the user will need to install them (`pip install pyjwt cryptography`) for app token generation.
+  - Store: `GITHUB_APP_CONFIGURED` (boolean), `APP_ID`, `INSTALLATION_ID`, `KEY_PATH`
+  - If no, set `GITHUB_APP_CONFIGURED = false`. All scripts will still work fine using the personal `gh` CLI auth — `--app-token` flag will simply not be available.
 
 #### If Jira:
 - Instance URL (e.g., `mycompany.atlassian.net`)
@@ -122,7 +132,7 @@ Explore the codebase to understand its structure. Run these in parallel:
    - External domains agents should be aware of when investigating issues (e.g., "auth is handled by our identity service in repo X", "we consume events from the payments service")
    - Any documentation URLs, API specs (OpenAPI/Swagger), or reference repos that would help agents understand integrations
 6. **Check for existing CLAUDE.md:** Read it if present — we'll append to it rather than overwrite
-7. **Check for existing .claude/commands/:** Warn if start.md, resume.md, review.md, discuss.md, or feature.md already exist
+7. **Check for existing .claude/commands/:** Warn if start.md, resume.md, review.md, discuss.md, feature.md, or sync.md already exist
 
 Present findings to the user:
 - "I found a [Go/Node/Python/etc.] project with these key directories: ..."
@@ -231,7 +241,7 @@ Write to `.claude/commands/start.md`. The generated command should handle:
 
 1. **Parse argument** — Extract task identifier from `$ARGUMENTS`. Support the following inputs:
    - **`auto [task]`** — Detect the `auto` keyword anywhere in the arguments. Strip it and set `AUTO_MODE=true`. The remaining argument is processed normally (task ID, URL, `next`, `rnext`, or empty). If empty in auto mode, treat as `next`.
-   - **`next`** — Auto-select the next task to work on. For GitHub Issues with utility scripts, run `python scripts/next-issue.py open`. For other providers, query for open/unassigned tasks, check `git branch -a` to filter out tasks that already have branches, and pick the lowest/highest-priority remaining task. Show the user which task was selected and ask for confirmation before proceeding (skip confirmation in auto mode).
+   - **`next`** — Auto-select the next task to work on. For GitHub Issues with utility scripts, run `python scripts/next-issue.py` (defaults to `ready` when Projects is configured, `open` otherwise). For other providers, query for open/unassigned tasks, check `git branch -a` to filter out tasks that already have branches, and pick the lowest/highest-priority remaining task. Show the user which task was selected and ask for confirmation before proceeding (skip confirmation in auto mode).
    - **`rnext`** or **`next ready`** — (GitHub Issues with Projects only) Select the next task from the project board's "Ready" column. Run `python scripts/next-issue.py ready`. If Projects is not configured, fall back to `next` behavior. Show the user which task was selected and ask for confirmation (skip in auto mode).
    - **Task ID** — A task identifier matching the configured pattern (e.g., `#42`, `PROJ-123`, `ENG-456`).
    - **URL** — A full URL to the task in the provider's UI.
@@ -587,7 +597,31 @@ Invoked as `/feature review {feature-name}`.
 
 7. **Offer to fix** — For each gap or staleness issue found, offer to update the feature docs. Make changes interactively — show proposed updates and ask for approval before writing.
 
-#### 6f. Update CLAUDE.md
+#### 6f. Generate `sync.md`
+
+Write to `.claude/commands/sync.md`. This is a generic workflow utility — generate it for all projects regardless of task management provider.
+
+The generated command should handle:
+
+1. **Gather current state** — Run in parallel: `git branch --show-current`, `git status --short`, `git remote`.
+2. **Commit uncommitted changes if needed** — If there are uncommitted changes (staged or unstaged, but NOT untracked-only): show the user the changes, stage modified/deleted files with `git add -u`, also stage new files that look like project code (not build artifacts, `.env`, etc.), and commit with the configured commit format. If the working tree is clean, continue.
+3. **Sync the branch:**
+   - **On the default base branch:** `git pull --rebase origin {base_branch}`
+   - **On a feature branch:** `git fetch origin {base_branch} && git rebase origin/{base_branch}`
+4. **Conflict resolution** — When `git rebase` stops due to conflicts:
+   - List conflicted files with `git diff --name-only --diff-filter=U`
+   - For each conflicted file: read the file, understand both sides, resolve intelligently (superset wins, combine independent changes, prefer main for structural changes, ask user for ambiguous cases)
+   - Stage resolved files and continue rebase with `git rebase --continue`
+   - If conflicts are too complex, abort with `git rebase --abort` and report to user
+5. **Report results** — Show: branch, whether new commits were pulled/rebased, conflict resolution summary, current status.
+
+**Safety rules** — Include these as hard rules in the generated command:
+- NEVER run `git push --force`, `git push --force-with-lease`, or any force push variant
+- NEVER run `git reset --hard`, `git clean -f`, `git checkout .`, or `git restore .`
+- NEVER delete branches
+- If anything goes wrong, abort the rebase and tell the user rather than attempting destructive recovery
+
+#### 6g. Update CLAUDE.md
 
 Add a `## Workflow Configuration` section to the project's CLAUDE.md (create if it doesn't exist). This section acts as the "config" that the generated commands reference.
 
@@ -604,6 +638,7 @@ Add a `## Workflow Configuration` section to the project's CLAUDE.md (create if 
 | `/start` | Begin a task — fetch context, create branch, spawn zone agents. Use `/start auto` for autonomous mode (implement, verify, commit, push, PR, merge). |
 | `/resume` | Continue after a break — reconstruct context from durable state |
 | `/review` | Pre-PR self-review — evaluate changes against requirements |
+| `/sync` | Pull latest and rebase current branch onto base branch |
 
 ### Task Management
 - **Provider:** {provider}
@@ -641,7 +676,11 @@ Add a `## Workflow Configuration` section to the project's CLAUDE.md (create if 
 ### Utility Scripts
 - `scripts/issue.py` — Issue management (view, assign, unassign, label, unlabel)
 - `scripts/next-issue.py` — Find next available task (`open` mode, `ready` mode with Projects)
-- `scripts/project.py` — Project board operations (move, add) — only when GitHub Projects configured
+- `scripts/project.py` — Project board operations (move, add, batch) — only when GitHub Projects configured
+- `scripts/gh.py` — Run any `gh` CLI command with optional app token auth
+- `scripts/gh_auth.py` — Shared token helper with caching (used by all scripts via `--app-token` flag)
+[IF GITHUB APP CONFIGURED:]
+- `scripts/gh_app_token.py` — Generate GitHub App installation tokens
 
 [IF PLANNING DOCS:]
 ### Planning
@@ -650,7 +689,7 @@ Add a `## Workflow Configuration` section to the project's CLAUDE.md (create if 
 - **Task plans:** `{planning_path}/{TASK_ID}.md`
 ```
 
-#### 6g. Configure Permissions
+#### 6h. Configure Permissions
 
 The generated commands need certain permissions to work without constant prompts. Check the project's `.claude/settings.json` (or `.claude/settings.local.json`) and offer to configure appropriate allow-lists.
 
@@ -690,7 +729,7 @@ Add any project-specific scripts found during codebase analysis (e.g., `Bash(mak
 - `Bash(gh issue *)` — issue operations (view, edit, comment, close)
 - `Bash(gh pr *)` — pull request operations (create, merge, view)
 - `Bash(gh project *)` — project board operations (when GitHub Projects configured)
-- `Bash(python scripts/*)` — utility scripts (when generated in Phase 6i)
+- `Bash(python scripts/*)` — utility scripts (when generated in Phase 6j)
 
 **Ask the user whether to allow (potentially destructive):**
 - `Bash(git push*)` — pushes to remote
@@ -706,7 +745,7 @@ Add any project-specific scripts found during codebase analysis (e.g., `Bash(mak
 
 Present the user with the proposed permission configuration and ask for approval before writing to `.claude/settings.json`. Explain that they can always adjust permissions later by editing the file directly.
 
-#### 6h. Git Hygiene Setup
+#### 6i. Git Hygiene Setup
 
 Based on the project type detected in Phase 3, check and offer to create or update git configuration files.
 
@@ -720,7 +759,7 @@ Based on the project type detected in Phase 3, check and offer to create or upda
   - **.NET/C#:** `bin/`, `obj/`, `*.user`, `*.suo`
   - **Ruby:** `.bundle/`, `vendor/bundle/`, `*.gem`
   - **Unity:** `Library/`, `Temp/`, `Obj/`, `Build/`, `Builds/`, `Logs/`, `UserSettings/`, `*.csproj`, `*.sln`
-- Always include: `.env`, `.env.local`, `.env.*.local`, `.DS_Store`, `*.log`
+- Always include: `.env`, `.env.local`, `.env.*.local`, `.DS_Store`, `*.log`, `*.pem`
 - Always include Claude Code artifacts that shouldn't be committed: `.claude/settings.local.json`
 - If a `.gitignore` already exists, show what entries would be added and ask before modifying.
 
@@ -741,11 +780,231 @@ Based on the project type detected in Phase 3, check and offer to create or upda
 
 For all files in this step: show the proposed content, ask for approval, and only write after confirmation.
 
-#### 6i. Generate GitHub Utility Scripts
+#### 6j. Generate GitHub Utility Scripts
 
 **Only generated when the provider is GitHub Issues.** Create a `scripts/` directory with the following Python scripts. Each script wraps `gh` CLI calls for common issue and project board operations.
 
-**`scripts/issue.py`** — Common issue operations, parameterized with `REPO` from Phase 1:
+All scripts support an optional `--app-token` flag that uses a GitHub App installation token instead of the user's personal token. This provides a separate rate limit pool — useful for CI/CD, bulk operations, and auto mode. The `--app-token` flag is only functional when GitHub App integration is configured (see Phase 1). Without it, scripts use whatever auth the `gh` CLI has configured.
+
+**`scripts/gh_app_token.py`** — **Only generated when GitHub App is configured.** Generates GitHub App installation tokens, parameterized with `APP_ID`, `INSTALLATION_ID`, and `KEY_PATH` from Phase 1:
+
+```python
+#!/usr/bin/env python3
+"""Generate a GitHub App installation token.
+
+Usage:
+  python scripts/gh_app_token.py              # prints token to stdout
+  python scripts/gh_app_token.py --env        # prints GH_TOKEN=<token> for eval
+
+The token is generated from the GitHub App private key and is valid for 1 hour.
+Uses the App to get a separate rate limit pool from the user's personal token.
+
+Requirements: pyjwt, cryptography (pip install pyjwt cryptography)
+"""
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+APP_ID = "{APP_ID}"
+INSTALLATION_ID = "{INSTALLATION_ID}"
+KEY_PATH = Path(__file__).resolve().parent.parent / "{KEY_PATH}"
+
+
+def generate_token():
+    try:
+        import jwt
+    except ImportError:
+        print("Error: pyjwt not installed. Run: pip install pyjwt cryptography",
+              file=sys.stderr)
+        sys.exit(1)
+
+    if not KEY_PATH.exists():
+        print(f"Error: Private key not found at {KEY_PATH}", file=sys.stderr)
+        sys.exit(1)
+
+    private_key = KEY_PATH.read_text()
+
+    # Generate JWT
+    now = int(time.time())
+    payload = {"iat": now - 60, "exp": now + (10 * 60), "iss": APP_ID}
+    jwt_token = jwt.encode(payload, private_key, algorithm="RS256")
+
+    # Generate installation access token
+    r2 = subprocess.run([
+        "curl", "-s", "-X", "POST",
+        "-H", f"Authorization: Bearer {jwt_token}",
+        "-H", "Accept: application/vnd.github+json",
+        f"https://api.github.com/app/installations/{INSTALLATION_ID}/access_tokens"
+    ], capture_output=True, text=True)
+    token_data = json.loads(r2.stdout)
+    if "token" not in token_data:
+        print(f"Error: {json.dumps(token_data)}", file=sys.stderr)
+        sys.exit(1)
+
+    return token_data["token"]
+
+
+def main():
+    token = generate_token()
+    if "--env" in sys.argv:
+        print(f"GH_TOKEN={token}")
+    else:
+        print(token)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**`scripts/gh_auth.py`** — **Always generated** (for all GitHub Issues projects). Shared token helper with caching, used by all other scripts via the `--app-token` flag. Gracefully handles the case where `gh_app_token.py` doesn't exist yet (prints a helpful message instead of crashing):
+
+```python
+#!/usr/bin/env python3
+"""Shared GitHub App token helper for all workflow scripts.
+
+Provides handle_app_token_flag() which strips --app-token from argv and,
+when present, generates a GitHub App installation token and sets it as
+GH_TOKEN in the environment. This gives a separate rate limit pool from
+the user's personal token.
+
+If gh_app_token.py is not present (GitHub App not configured), --app-token
+prints a helpful message and continues using default gh CLI auth.
+
+Caches tokens to /tmp/{PROJECT_NAME}_gh_app_token.json with a 50-minute TTL
+(tokens are valid for 60 minutes) to avoid redundant generation.
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+CACHE_PATH = Path("/tmp/{PROJECT_NAME}_gh_app_token.json")
+CACHE_TTL = 50 * 60  # 50 minutes (tokens valid for 60)
+TOKEN_SCRIPT = Path(__file__).resolve().parent / "gh_app_token.py"
+
+
+def _is_app_configured():
+    """Check whether gh_app_token.py exists (i.e., GitHub App is configured)."""
+    return TOKEN_SCRIPT.exists()
+
+
+def _read_cached_token():
+    """Return cached token if valid, else None."""
+    try:
+        data = json.loads(CACHE_PATH.read_text())
+        if data.get("expires_at", 0) > time.time():
+            return data["token"]
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        pass
+    return None
+
+
+def _generate_and_cache_token():
+    """Generate a fresh token, cache it, and return it."""
+    result = subprocess.run([sys.executable, str(TOKEN_SCRIPT)],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Error generating app token: {result.stderr.strip()}", file=sys.stderr)
+        sys.exit(1)
+    token = result.stdout.strip()
+    try:
+        CACHE_PATH.write_text(json.dumps({
+            "token": token,
+            "expires_at": time.time() + CACHE_TTL,
+        }))
+        CACHE_PATH.chmod(0o600)
+    except OSError:
+        pass  # Non-fatal — caching is best-effort
+    return token
+
+
+def _get_token():
+    """Return a valid app token, using cache when possible."""
+    return _read_cached_token() or _generate_and_cache_token()
+
+
+def setup_app_token():
+    """Generate and set GH_TOKEN from the GitHub App."""
+    os.environ["GH_TOKEN"] = _get_token()
+
+
+def get_app_token():
+    """Generate and return a GitHub App installation token string."""
+    return _get_token()
+
+
+def handle_app_token_flag(argv):
+    """Strip --app-token from argv and set up token if present.
+
+    Returns the filtered argv list (without --app-token).
+    If --app-token is used but gh_app_token.py doesn't exist, prints
+    a message explaining how to set up a GitHub App and continues
+    using default gh CLI auth.
+    """
+    filtered = [a for a in argv if a != "--app-token"]
+    if "--app-token" in argv:
+        if _is_app_configured():
+            setup_app_token()
+        else:
+            print("--app-token: GitHub App not configured. To enable:", file=sys.stderr)
+            print("  1. Create a GitHub App at https://github.com/settings/apps", file=sys.stderr)
+            print("  2. Grant it repo/project permissions and install on your org", file=sys.stderr)
+            print("  3. Download the private key (.pem) into this repo", file=sys.stderr)
+            print("     (*.pem is already in .gitignore — never commit private keys!)", file=sys.stderr)
+            print("  4. pip install pyjwt cryptography", file=sys.stderr)
+            print("  5. Re-run /bootstrap and say yes to 'GitHub App integration'", file=sys.stderr)
+            print("  Falling back to default gh CLI auth.\n", file=sys.stderr)
+    return filtered
+```
+
+Replace `{PROJECT_NAME}` with a filesystem-safe version of the project name (lowercase, hyphens, no spaces) for the cache path.
+
+**`scripts/gh.py`** — Run any `gh` CLI command with optional app token auth, parameterized with `REPO` from Phase 1:
+
+```python
+#!/usr/bin/env python3
+"""Run any gh CLI command with optional GitHub App token authentication.
+
+Usage:
+  python scripts/gh.py [--app-token] <gh subcommand and args...>
+
+Examples:
+  python scripts/gh.py --app-token issue view 42 --repo {REPO}
+  python scripts/gh.py --app-token pr create --repo {REPO} --title "Fix" --body "..."
+  python scripts/gh.py --app-token pr merge 123 --repo {REPO} --squash
+  python scripts/gh.py issue comment 42 --repo {REPO} --body "Done"
+
+Options:
+  --app-token    Use GitHub App token (avoids personal rate limits)
+
+Without --app-token, uses whatever auth gh CLI has configured (personal token).
+"""
+import subprocess
+import sys
+
+from gh_auth import handle_app_token_flag
+
+
+def main():
+    args = handle_app_token_flag(sys.argv[1:])
+
+    if not args:
+        print(__doc__.strip())
+        sys.exit(2)
+
+    result = subprocess.run(["gh"] + args)
+    sys.exit(result.returncode)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**`scripts/issue.py`** — Common issue operations with `--app-token` support, parameterized with `REPO` from Phase 1:
 
 ```python
 #!/usr/bin/env python3
@@ -757,15 +1016,23 @@ Usage:
   python scripts/issue.py unassign <issue_num>     # Remove your assignment
   python scripts/issue.py label <issue_num> <label> [<label> ...]   # Add labels
   python scripts/issue.py unlabel <issue_num> <label> [<label> ...]  # Remove labels
+
+Options:
+  --app-token    Use GitHub App token (avoids personal rate limits)
 """
-import json, subprocess, sys
+import json, os, subprocess, sys
+
+from gh_auth import handle_app_token_flag
 
 REPO = "{REPO}"
 
 
 def gh(*args, json_output=False):
     cmd = ["gh"] + list(args)
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    env = None
+    if os.environ.get("GH_TOKEN"):
+        env = {**os.environ}
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", env=env)
     if result.returncode != 0:
         print(f"Error: {result.stderr.strip()}", file=sys.stderr)
         sys.exit(1)
@@ -802,24 +1069,30 @@ def cmd_unassign(issue_num):
 
 
 def cmd_label(issue_num, labels):
+    label_args = []
     for label in labels:
-        gh("issue", "edit", str(issue_num), "--repo", REPO, "--add-label", label)
+        label_args += ["--add-label", label]
+    gh("issue", "edit", str(issue_num), "--repo", REPO, *label_args)
     print(f"#{issue_num} labels added: {', '.join(labels)}")
 
 
 def cmd_unlabel(issue_num, labels):
+    label_args = []
     for label in labels:
-        gh("issue", "edit", str(issue_num), "--repo", REPO, "--remove-label", label)
+        label_args += ["--remove-label", label]
+    gh("issue", "edit", str(issue_num), "--repo", REPO, *label_args)
     print(f"#{issue_num} labels removed: {', '.join(labels)}")
 
 
 def main():
-    if len(sys.argv) < 3:
+    args = handle_app_token_flag(sys.argv[1:])
+
+    if len(args) < 2:
         print(__doc__.strip())
         sys.exit(2)
 
-    command = sys.argv[1]
-    issue_num = int(sys.argv[2].lstrip("#"))
+    command = args[0]
+    issue_num = int(args[1].lstrip("#"))
 
     if command == "view":
         cmd_view(issue_num)
@@ -828,15 +1101,17 @@ def main():
     elif command == "unassign":
         cmd_unassign(issue_num)
     elif command == "label":
-        if len(sys.argv) < 4:
+        remaining = args[2:]
+        if not remaining:
             print("Usage: issue.py label <issue_num> <label> [<label> ...]")
             sys.exit(2)
-        cmd_label(issue_num, sys.argv[3:])
+        cmd_label(issue_num, remaining)
     elif command == "unlabel":
-        if len(sys.argv) < 4:
+        remaining = args[2:]
+        if not remaining:
             print("Usage: issue.py unlabel <issue_num> <label> [<label> ...]")
             sys.exit(2)
-        cmd_unlabel(issue_num, sys.argv[3:])
+        cmd_unlabel(issue_num, remaining)
     else:
         print(f"Unknown command '{command}'. Use: view, assign, unassign, label, unlabel")
         sys.exit(2)
@@ -846,24 +1121,31 @@ if __name__ == "__main__":
     main()
 ```
 
-**`scripts/next-issue.py`** — Find the next issue to work on, parameterized with `REPO` (and `PROJECT_NUM`, `PROJECT_OWNER` when GitHub Projects is configured):
+**`scripts/next-issue.py`** — Find the next issue to work on with `--app-token` support, parameterized with `REPO` (and `PROJECT_NUM`, `PROJECT_OWNER` when GitHub Projects is configured):
 
 ```python
 #!/usr/bin/env python3
 """Print the next 3 issues to work on that don't have branches yet.
 
 Usage:
+  python scripts/next-issue.py ready   # From project board "Ready" column (default when Projects configured)
   python scripts/next-issue.py open    # From open unassigned issues
-  python scripts/next-issue.py ready   # From project board "Ready" column (requires GitHub Projects)
+
+Options:
+  --app-token    Use GitHub App token (avoids personal rate limits)
 """
 import json, subprocess, re, sys
+
+from gh_auth import handle_app_token_flag
 
 REPO = "{REPO}"
 # GitHub Projects config (empty if not configured)
 PROJECT_NUM = {PROJECT_NUM}  # None if not configured
 PROJECT_OWNER = "{PROJECT_OWNER}"  # empty string if not configured
 
-mode = sys.argv[1] if len(sys.argv) > 1 else "open"
+args = handle_app_token_flag(sys.argv[1:])
+default_mode = "ready" if PROJECT_NUM else "open"
+mode = args[0] if args else default_mode
 
 branches = subprocess.check_output(["git", "branch", "-a"], text=True, encoding="utf-8")
 taken = {int(m) for m in re.findall(r"/(\d+)-", branches)}
@@ -874,7 +1156,7 @@ if mode == "ready":
         sys.exit(2)
     board = json.loads(subprocess.check_output(
         ["gh", "project", "item-list", str(PROJECT_NUM), "--owner", PROJECT_OWNER,
-         "--format", "json", "--limit", "50"],
+         "--format", "json", "--limit", "200"],
         text=True, encoding="utf-8"
     ))
     candidates = sorted(
@@ -907,23 +1189,30 @@ for num, title in candidates[:3]:
     print(f"#{num} -- {title}")
 ```
 
-**`scripts/project.py`** — **Only generated when GitHub Projects is configured.** Manage project board items, parameterized with all project IDs from Phase 1 discovery:
+**`scripts/project.py`** — **Only generated when GitHub Projects is configured.** Manage project board items with `--app-token` support and batch operations, parameterized with all project IDs from Phase 1 discovery:
 
 ```python
 #!/usr/bin/env python3
 """Manage GitHub project board items.
 
 Usage:
-  python scripts/project.py move <issue_num> <status>
-  python scripts/project.py add  <issue_num> [<status>]
+  python scripts/project.py move  <issue_num> <status>
+  python scripts/project.py add   <issue_num> [<status>]
+  python scripts/project.py batch <issue_nums...> <status>
+
+Options:
+  --app-token    Use GitHub App token (avoids personal rate limits for bulk ops)
 
 Statuses: {comma-separated STATUS_OPTIONS keys}
 
 Examples:
   python scripts/project.py move 4 in-progress
   python scripts/project.py add 4 ready
+  python scripts/project.py batch 42 43 44 ready --app-token
 """
-import json, subprocess, sys
+import json, os, subprocess, sys
+
+from gh_auth import handle_app_token_flag
 
 PROJECT_NUM = {PROJECT_NUM}
 PROJECT_OWNER = "{PROJECT_OWNER}"
@@ -937,7 +1226,10 @@ STATUS_OPTIONS = {STATUS_OPTIONS}  # dict mapping status name -> option ID
 
 def gh(*args, json_output=False):
     cmd = ["gh"] + list(args)
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    env = None
+    if os.environ.get("GH_TOKEN"):
+        env = {**os.environ}
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", env=env)
     if result.returncode != 0:
         print(f"Error: {result.stderr.strip()}", file=sys.stderr)
         sys.exit(1)
@@ -946,15 +1238,25 @@ def gh(*args, json_output=False):
     return result.stdout.strip()
 
 
-def find_item_id(issue_num):
-    """Find the project item ID for an issue already on the board."""
-    board = gh("project", "item-list", str(PROJECT_NUM), "--owner", PROJECT_OWNER,
-               "--format", "json", "--limit", "200", json_output=True)
+def fetch_board():
+    """Fetch the full project board (up to 200 items)."""
+    return gh("project", "item-list", str(PROJECT_NUM), "--owner", PROJECT_OWNER,
+              "--format", "json", "--limit", "200", json_output=True)
+
+
+def find_item_id_in_board(board, issue_num):
+    """Find the project item ID for an issue in a pre-fetched board."""
     for item in board.get("items", []):
         content = item.get("content", {})
         if content.get("number") == issue_num:
             return item["id"]
     return None
+
+
+def find_item_id(issue_num):
+    """Find the project item ID for an issue already on the board."""
+    board = fetch_board()
+    return find_item_id_in_board(board, issue_num)
 
 
 def add_item(issue_num):
@@ -994,31 +1296,61 @@ def cmd_add(issue_num, status=None):
         print(f"#{issue_num} -> {status}")
 
 
+def cmd_batch(issue_nums, status):
+    """Add multiple issues to the board with a status.
+
+    Fetches the board once and reuses cached data to minimize API calls.
+    """
+    board = fetch_board()
+    for issue_num in issue_nums:
+        item_id = find_item_id_in_board(board, issue_num)
+        if item_id:
+            print(f"#{issue_num} already on board.")
+        else:
+            item_id = add_item(issue_num)
+            print(f"#{issue_num} added to board.")
+        set_status(item_id, status)
+        print(f"#{issue_num} -> {status}")
+
+
 def main():
-    if len(sys.argv) < 3:
+    args = handle_app_token_flag(sys.argv[1:])
+
+    if len(args) < 2:
         print(__doc__.strip())
         sys.exit(2)
 
-    command = sys.argv[1]
-    issue_num = int(sys.argv[2].lstrip("#"))
+    command = args[0]
 
     if command == "move":
-        if len(sys.argv) < 4:
+        issue_num = int(args[1].lstrip("#"))
+        if len(args) < 3:
             print("Usage: project.py move <issue_num> <status>")
             sys.exit(2)
-        status = sys.argv[3]
+        status = args[2]
         if status not in STATUS_OPTIONS:
             print(f"Unknown status '{status}'. Options: {', '.join(STATUS_OPTIONS)}")
             sys.exit(2)
         cmd_move(issue_num, status)
     elif command == "add":
-        status = sys.argv[3] if len(sys.argv) > 3 else None
+        issue_num = int(args[1].lstrip("#"))
+        status = args[2] if len(args) > 2 else None
         if status and status not in STATUS_OPTIONS:
             print(f"Unknown status '{status}'. Options: {', '.join(STATUS_OPTIONS)}")
             sys.exit(2)
         cmd_add(issue_num, status)
+    elif command == "batch":
+        if len(args) < 3:
+            print("Usage: project.py batch <issue_nums...> <status>")
+            sys.exit(2)
+        status = args[-1]
+        if status not in STATUS_OPTIONS:
+            print(f"Unknown status '{status}'. Options: {', '.join(STATUS_OPTIONS)}")
+            sys.exit(2)
+        issue_nums = [int(a.lstrip("#")) for a in args[1:-1]]
+        cmd_batch(issue_nums, status)
     else:
-        print(f"Unknown command '{command}'. Use 'move' or 'add'.")
+        print(f"Unknown command '{command}'. Use 'move', 'add', or 'batch'.")
         sys.exit(2)
 
 
@@ -1026,7 +1358,7 @@ if __name__ == "__main__":
     main()
 ```
 
-Replace the `{REPO}`, `{PROJECT_NUM}`, `{PROJECT_OWNER}`, `{PROJECT_ID}`, `{STATUS_FIELD_ID}`, and `{STATUS_OPTIONS}` placeholders with the actual values discovered in Phase 1. For `next-issue.py`, set `PROJECT_NUM = None` and `PROJECT_OWNER = ""` when GitHub Projects is not configured.
+Replace the `{REPO}`, `{PROJECT_NUM}`, `{PROJECT_OWNER}`, `{PROJECT_ID}`, `{STATUS_FIELD_ID}`, `{STATUS_OPTIONS}`, `{APP_ID}`, `{INSTALLATION_ID}`, `{KEY_PATH}`, and `{PROJECT_NAME}` placeholders with the actual values discovered in Phase 1. For `next-issue.py`, set `PROJECT_NUM = None` and `PROJECT_OWNER = ""` when GitHub Projects is not configured.
 
 ---
 
@@ -1034,14 +1366,20 @@ Replace the `{REPO}`, `{PROJECT_NUM}`, `{PROJECT_OWNER}`, `{PROJECT_ID}`, `{STAT
 
 After generating all files:
 
-1. List the files created and their paths. If utility scripts were generated (GitHub Issues provider), list them separately under a **Utility Scripts** heading:
-   - `scripts/issue.py` — issue management (view, assign, label)
-   - `scripts/next-issue.py` — find next available task
-   - `scripts/project.py` — project board operations (only when GitHub Projects configured)
-2. Show a quick summary of what each command does (`/feature`, `/discuss`, `/start`, `/resume`, `/review`). Include auto mode in the `/start` description: "`/start auto next` — autonomous mode: implement, verify, commit, push, create PR, and merge without confirmation prompts"
+1. List the files created and their paths:
+   - **Commands:** `.claude/commands/` — `feature.md`, `discuss.md`, `start.md`, `resume.md`, `review.md`, `sync.md`
+   - If utility scripts were generated (GitHub Issues provider), list them separately under a **Utility Scripts** heading:
+     - `scripts/issue.py` — issue management (view, assign, label) with `--app-token` support
+     - `scripts/next-issue.py` — find next available task with `--app-token` support
+     - `scripts/project.py` — project board operations (move, add, batch) — only when GitHub Projects configured
+     - `scripts/gh.py` — run any `gh` CLI command with optional app token auth
+     - `scripts/gh_auth.py` — shared auth helper (always generated; handles `--app-token` gracefully whether or not GitHub App is configured)
+     - If GitHub App configured: `scripts/gh_app_token.py` — token generation
+2. Show a quick summary of what each command does (`/feature`, `/discuss`, `/start`, `/resume`, `/review`, `/sync`). Include auto mode in the `/start` description: "`/start auto next` — autonomous mode: implement, verify, commit, push, create PR, and merge without confirmation prompts"
 3. Suggest the user try `/feature` to spec out their first feature, `/start {EXAMPLE_TASK_ID}` to begin an existing task, or `/start auto next` for fully autonomous task completion
 4. If GitHub Projects is configured, verify that the discovered project IDs are correct by confirming the project board name and status columns with the user
-5. Mention they can re-run `/bootstrap` to regenerate if needed
+5. If GitHub App is configured, verify the app token works by running `python scripts/gh_app_token.py` and checking for a valid token output
+6. Mention they can re-run `/bootstrap` to regenerate if needed
 
 ---
 
@@ -1057,10 +1395,11 @@ GitHub Issues is the recommended provider. It has full scripting support via gen
 - **Task ID pattern:** `#\d+` or just the number
 - **Transition:** Use `gh issue close` or label changes, or `python scripts/project.py move {NUMBER} {status}` when Projects is configured
 - **Comment:** Use `gh issue comment {NUMBER} -b "message"`
-- **Assign:** Use `python scripts/issue.py assign {NUMBER}` or `gh issue edit {NUMBER} --add-assignee @me`
+- **Assign:** Use `python scripts/issue.py assign {NUMBER}` (add `--app-token` for app auth) or `gh issue edit {NUMBER} --add-assignee @me`
 - **Branch extraction regex:** Extract number from branch name (e.g., `(\d+)` from `feature/42-task-name` — never include `#` in branch names as it interferes with shell and command parsing)
-- **Next task:** Use `python scripts/next-issue.py open` (or `ready` when Projects is configured) to find unstarted issues without branches
-- **Project board:** When GitHub Projects is configured, use `python scripts/project.py move {NUMBER} {status}` and `python scripts/project.py add {NUMBER} [status]`
+- **Next task:** Use `python scripts/next-issue.py` (defaults to `ready` when Projects is configured, `open` otherwise) to find unstarted issues without branches. Add `--app-token` for app auth.
+- **Project board:** When GitHub Projects is configured, use `python scripts/project.py move {NUMBER} {status}`, `python scripts/project.py add {NUMBER} [status]`, or `python scripts/project.py batch {NUMS...} {status}` for bulk operations. Add `--app-token` for app auth.
+- **Generic gh commands:** Use `python scripts/gh.py [--app-token] <gh args...>` to run any `gh` CLI command with optional app token auth
 - **CLAUDE.md config:**
   ```
   - **Provider:** GitHub Issues
